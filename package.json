@@ -7,6 +7,9 @@
     "check": "tsx scripts/check.ts",
     "typecheck": "tsc --noEmit"
   },
+  "dependencies": {
+    "xlsx": "^0.18.5"
+  },
   "devDependencies": {
     "esbuild": "^0.24.0",
     "tsx": "^4.19.0",

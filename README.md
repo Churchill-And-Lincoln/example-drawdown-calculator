@@ -1,94 +1,113 @@
-# Build a tool for Churchill & Lincoln
+# Pension Drawdown Modeller — an example tool for ManyUseful.Tools
 
-This is the official template for [manyuseful.tools](https://manyuseful.tools)
-— the pay-per-use tool marketplace. You write **one function**; the platform
-handles the storefront, the form, payment, delivery, email, and the buyer's
-permanent result link. You keep **95% of every sale**, paid directly into
-your own Stripe account at the moment of purchase.
+This repo is a **worked example** of a marketplace tool built for
+[ManyUseful.Tools](https://manyuseful.tools), the pay-per-use tool
+marketplace from Churchill & Lincoln. It exists to show what a complete,
+publishable tool looks like — use it as a reference or as the starting
+point for your own tool.
 
-## The whole contract
+## What the tool does
 
-A tool is three files in `tool/`:
+**"How long will the pot actually last?"**
+
+The buyer enters a few details about their pension and retirement plans and
+gets back a year-by-year drawdown projection:
+
+- **A verdict** — the age the pot runs out, or confirmation it lasts beyond 100.
+- **Key figures** — pot after any tax-free lump sum, and the yearly draw
+  before and after the State Pension starts at 68.
+- **A line chart** of the pot balance by age.
+- **A year-by-year table** — amount drawn, growth, and closing balance.
+- **A downloadable Excel model** with live formulas. Change the income,
+  growth rate, or lump-sum percentage on the Inputs sheet and the whole
+  projection recalculates.
+
+The model works in real (after-inflation) terms, allows a tax-free lump sum
+of up to 25%, offsets the full or partial State Pension from age 68, and
+ignores income tax (a v1 simplification, flagged in both the result and the
+spreadsheet). It is illustrative only, not financial advice.
+
+It is priced flat at £10 and needs **no API keys** — it's pure arithmetic,
+so you can run it locally straight away.
+
+## How it's built
+
+A ManyUseful.Tools tool is one function plus a form; the platform handles
+the storefront, payment, rendering, email, and the buyer's permanent result
+link. Everything specific to this tool lives in `tool/`:
 
 | File | What it is |
 |---|---|
-| `config.ts` | Name, description, price and pricing curve, required secrets |
+| `config.ts` | Slug, name, description, price (£10, flat), required secrets (none) |
 | `schema.ts` | The buyer's form, declared as fields — the platform renders it |
-| `run.ts` | `async (input, secrets, ctx) => Result` — your actual tool |
+| `run.ts` | `computeDrawdown()` builds the projection; `run()` turns it into result blocks and the attachment |
+| `xlsx.ts` | Builds the Excel workbook with live formulas from the model |
+| `excel.ts` | Small helper around the `xlsx` package for writing cells and formulas |
 
-Your `run()` gets the buyer's validated answers and your secrets, does its
-work (call an LLM, crunch numbers, whatever), and returns a **Result**: a
-title, a one-line summary, and content blocks (markdown, tables, key-values,
-charts) plus optional file attachments like an Excel model. The platform
-renders that identically-branded for every tool on the marketplace. You
-never write frontend, payment, or email code.
+`run(input, secrets, ctx)` receives the buyer's validated answers and
+returns a **Result**: a title, a one-line summary, content blocks
+(key-values, chart, table, markdown) and the `.xlsx` attachment. If it
+throws, the buyer is refunded — so it never returns a degraded result.
 
-## Start here
+Everything outside `tool/` (`sdk/`, `dev/`, `scripts/`, the workflow) is
+platform scaffolding and should not be edited.
+
+## Run it locally
 
 ```bash
-# 1. Make your own repo from this template (green "Use this template"
-#    button on GitHub — don't fork), then:
 npm install
-cp .env.example .env      # add any API keys your tool will use
+cp .env.example .env      # no secrets needed for this example
 npm run dev               # → http://localhost:5150
 ```
 
-The dev server renders your form, runs your `run()` with the `.env` secrets,
-and previews the result. The included example (a Meeting Agenda builder)
-works with **no keys at all** — run it first, then gut `tool/` and build
-yours. `npm run check` validates your config and schema against the
-platform's rules at any time.
+The dev server renders the form, runs `run()`, and previews the result
+including the Excel download. `npm run check` validates the config and
+schema against the platform's rules.
 
-## The rules of the house
+## Making your own tool
 
-- **Banknotes only.** Every price is a multiple of £5/$5. Your `config.ts`
-  declares one of three pricing curves, printed on your tool's card:
-  - `descent` — your price drops £5 per repeat purchase per buyer, flooring
-    at £5. The floor is platform law. Loyalty gets cheaper.
-  - `ascent` — starts at your list price and rises £5 per repeat purchase
-    per buyer, up to a cap you set. Price it knowing list is your intro
-    price: buyers who don't use their return links pay list again, never
-    more — so list must be a price you're happy with forever.
+Use this repo as a template (the green "Use this template" button on
+GitHub — don't fork), then replace the contents of `tool/` with your own
+config, schema, and `run()`.
+
+### The rules of the house
+
+- **Banknotes only.** Every price is a multiple of £5/$5. `config.ts`
+  declares one of three pricing curves:
+  - `descent` — price drops £5 per repeat purchase per buyer, flooring at £5.
+  - `ascent` — starts at list and rises £5 per repeat purchase, up to a cap
+    you set. List is your intro price and must be one you're happy with forever.
   - `flat` — name your price and stand by it.
 - **Buyers have no accounts.** Repeat-purchase pricing works through return
-  links in the result emails. Your tool doesn't need to know any of this.
-- **If your run() throws, the buyer is refunded, not shortchanged.** The
-  platform retries twice, then refunds. So *do* throw on failure — never
-  return a degraded or empty result for a paid output.
+  links in the result emails; your tool never needs to know.
+- **If `run()` throws, the buyer is refunded, not shortchanged.** The
+  platform retries twice, then refunds. Throw on failure; never return an
+  empty or degraded result for a paid output.
 - **Your API keys are yours.** Declare names in `requiredSecrets`, set the
-  values in your dashboard's Secrets tab. They're stored encrypted by
-  Cloudflare inside your tool's own sandbox — the platform can't read them,
-  other tools can't reach them, and their cost comes out of your margin, so
-  price accordingly.
+  values in the dashboard's Secrets tab. They're stored encrypted inside
+  your tool's own sandbox and their cost comes out of your margin.
 - **Runtime:** TypeScript only, bundled to one file. No filesystem, no
-  native modules, HTTP via `ctx.fetch` only, and finish within a couple of
-  minutes (plenty for any LLM call). CPU and request limits are enforced.
-- **Attachments:** up to 5 MB total per result. For spreadsheet outputs,
-  generate the bytes yourself (e.g. with the `xlsx` package) and return
-  them as an attachment — pro tip: sheets with live formulas beat static
-  values; buyers love a model they can edit.
+  native modules, HTTP via `ctx.fetch` only, finish within a couple of
+  minutes. At most 20 form fields.
+- **Attachments:** up to 5 MB total per result. Spreadsheets with live
+  formulas beat static values — buyers love a model they can edit.
 
-## Publishing
+### Publishing
 
-1. Sign in at **app.manyuseful.tools** with GitHub, connect your Stripe
-   account (you're the merchant of record — buyers pay you directly).
-2. Create your tool there: pick the slug (it becomes
+1. Sign in at **app.manyuseful.tools** with GitHub and connect your Stripe
+   account (you're the merchant of record; buyers pay you directly and you
+   keep 95% of every sale).
+2. Create your tool there, pick the slug (it becomes
    `your-slug.manyuseful.tools`) and copy the **deploy token**.
 3. In your repo: Settings → Secrets and variables → Actions → add
    `CL_DEPLOY_TOKEN`.
 4. Set any `requiredSecrets` values in the dashboard's Secrets tab.
 5. **Push to main.** The included workflow validates, bundles, and
-   publishes. First version goes to the founders for a quick human review
-   (usually same-day); after approval, every push deploys live
-   automatically.
-
-The kill switch is ours; the tool, the price, the customers' money — yours.
-
-## What good tools have in common
+   publishes. The first version gets a quick human review; after approval,
+   every push deploys live automatically.
 
 The form is the product: buyers pay for what comes out, and what comes out
 depends on what your questions extract. Six sharp questions beat twenty
-vague ones. Look at any tool on the marketplace and study its form before
-writing yours.
+vague ones.
 
 Questions: **support@manyuseful.tools**
