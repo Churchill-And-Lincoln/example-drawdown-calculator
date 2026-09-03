@@ -1,0 +1,20 @@
+# Publishes the tool to Churchill & Lincoln on every push to main.
+# Setup (once): create your tool at app.manyuseful.tools, copy its deploy
+# token, and add it here as a repository secret named CL_DEPLOY_TOKEN
+# (Settings → Secrets and variables → Actions). Without the secret this
+# workflow just validates.
+name: publish
+on:
+  push:
+    branches: [main]
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/publish.mjs
+        env:
+          CL_DEPLOY_TOKEN: ${{ secrets.CL_DEPLOY_TOKEN }}
