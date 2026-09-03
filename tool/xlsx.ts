@@ -2,8 +2,7 @@
 // sum % on Inputs and the projection recalculates. Income tax ignored (v1).
 import { buildXlsx, GBP, type Cell } from "./excel";
 import type { DrawdownModel } from "./run";
-
-export const STATE_PENSION_AGE = 68;
+import { MAX_AGE, STATE_PENSION_AGE } from "./constants";
 
 export function buildDrawdownXlsx(m: DrawdownModel): Uint8Array {
   // Inputs: B2 start age, B3 pot, B4 income, B5 pension/yr, B6 growth %,
@@ -24,7 +23,7 @@ export function buildDrawdownXlsx(m: DrawdownModel): Uint8Array {
   // Projection: A age, B draw, C growth, D balance at year end.
   // Row 2 = first drawdown year, starting from pot less the lump sum.
   const proj: Cell[][] = [["Age", "Drawn from pot", "Growth", "Balance at year end"]];
-  const nYears = 100 - m.startAge + 1;
+  const nYears = MAX_AGE - m.startAge + 1;
   for (let i = 0; i < nYears; i++) {
     const r = i + 2; // this row, 1-indexed
     const prevBal = i === 0 ? `${I}B3*(1-${I}B7/100)` : `D${r - 1}`;

@@ -1,14 +1,19 @@
 import type { ToolSchema } from "../sdk/types";
 
-// The form the buyer fills in. The platform renders it — you never write UI.
-// Good questions are the product: what goes in decides what comes out.
+/** Matched by prefix ("Full" / "Partial") in pensionAmount() in run.ts. */
+export const PENSION_OPTIONS = [
+  "Full State Pension",
+  "Partial State Pension (roughly half)",
+  "None",
+];
+
 export const schema: ToolSchema = {
   fields: [
-    { kind: "text", id: "purpose", label: "What is this meeting for, in one sentence?", required: true, placeholder: "e.g. Decide the Q4 launch date and owners" },
-    { kind: "number", id: "minutes", label: "How long is the meeting (minutes)?", min: 15, max: 240, required: true },
-    { kind: "textarea", id: "attendees", label: "Who's attending, and what do they care about?", rows: 3, required: true },
-    { kind: "textarea", id: "topics", label: "Topics that must be covered (one per line)", rows: 4, required: true },
-    { kind: "select", id: "style", label: "Meeting style", options: ["Decision-focused", "Brainstorm", "Status/standup", "Difficult conversation"], required: true },
-    { kind: "text", id: "outcome", label: "What must be true when the meeting ends?", required: true },
+    { kind: "number", id: "startAge", label: "Drawdown start age", min: 55, max: 80, required: true },
+    { kind: "number", id: "pot", label: "Pension pot (£)", min: 1, max: 100_000_000, required: true },
+    { kind: "number", id: "income", label: "Desired annual income (£)", min: 1, max: 10_000_000, required: true },
+    { kind: "select", id: "pension", label: "State Pension expectation", options: PENSION_OPTIONS, required: true },
+    { kind: "number", id: "growth", label: "Real growth % per year (typically 4)", min: 0, max: 20, required: true },
+    { kind: "number", id: "lumpSum", label: "Tax-free lump sum taken at start, % of pot (0–25, optional)", min: 0, max: 25 },
   ],
 };

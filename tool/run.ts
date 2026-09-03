@@ -1,7 +1,19 @@
-import type { Result, ResultBlock, ToolCtx } from "../sdk/types";
+import type { ResultBlock, RunFn } from "../sdk/types";
 import { buildDrawdownXlsx } from "./xlsx";
+import {
+  DEFAULT_GROWTH_PCT,
+  MAX_AGE,
+  MAX_LUMP_PCT,
+  STATE_PENSION_AGE,
+  STATE_PENSION_FULL,
+  XLSX_MIME,
+} from "./constants";
 
-export const DISCLAIMER_BLOCK: ResultBlock = {
+// ---------------------------------------------------------------------------
+// Static blocks
+// ---------------------------------------------------------------------------
+
+const DISCLAIMER_BLOCK: ResultBlock = {
   type: "markdown",
   content: `---
 
@@ -11,34 +23,56 @@ export const DISCLAIMER_BLOCK: ResultBlock = {
 > rules change. Check anything important with a professional before acting._`,
 };
 
-export const XLSX_MIME =
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+const TAX_NOTE_BLOCK: ResultBlock = {
+  type: "markdown",
+  content:
+    "_Income tax is ignored in this v1 model — the draw shown is gross. The Excel notes say the same._",
+};
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
 /** "£1,234,567" — whole pounds, thousands separators. */
 export const gbp = (n: number): string =>
   `£${Math.round(n).toLocaleString("en-GB")}`;
 
-export const num = (input: Record<string, string>, id: string, fallback = 0): number => {
+/** Read a numeric field from the form input, falling back if missing or non-numeric. */
+const num = (input: Record<string, string>, id: string, fallback = 0): number => {
   const n = Number(input[id]);
   return Number.isFinite(n) ? n : fallback;
 };
 
-export const STATE_PENSION_FULL = 11973;
-export const STATE_PENSION_AGE = 68;
+const clamp = (n: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, n));
 
-export const pensionAmount = (choice: string): number =>
-  choice.startsWith("Full") ? STATE_PENSION_FULL : choice.startsWith("Partial") ? STATE_PENSION_FULL / 2 : 0;
+/** £/yr of State Pension implied by the select choice (see PENSION_OPTIONS in schema.ts). */
+export const pensionAmount = (choice: string): number => {
+  if (choice.startsWith("Full")) return STATE_PENSION_FULL;
+  if (choice.startsWith("Partial")) return STATE_PENSION_FULL / 2;
+  return 0;
+};
+
+// ---------------------------------------------------------------------------
+// Model
+// ---------------------------------------------------------------------------
+
+export interface DrawdownYear {
+  age: number;
+  draw: number;
+  growth: number;
+  balance: number;
+}
 
 export interface DrawdownModel {
   startAge: number;
   pot: number;
   income: number;
-  pension: number; // £/yr from 68
-  growth: number; // %
+  pension: number; // £/yr from STATE_PENSION_AGE
+  growth: number; // % per year, real terms
   lumpPct: number; // 0–25
   lumpTaken: number;
-  years: { age: number; draw: number; growth: number; balance: number }[];
-  depletionAge: number | null; // null = lasts beyond 100
+  years: DrawdownYear[];
+  depletionAge: number | null; // null = lasts beyond MAX_AGE
 }
 
 export function computeDrawdown(input: Record<string, string>): DrawdownModel {
@@ -46,49 +80,58 @@ export function computeDrawdown(input: Record<string, string>): DrawdownModel {
   const pot = num(input, "pot");
   const income = num(input, "income");
   const pension = pensionAmount(input.pension ?? "");
-  const growth = num(input, "growth", 4);
-  const lumpPct = Math.min(25, Math.max(0, num(input, "lumpSum", 0)));
+  const growth = num(input, "growth", DEFAULT_GROWTH_PCT);
+  const lumpPct = clamp(num(input, "lumpSum"), 0, MAX_LUMP_PCT);
   const lumpTaken = pot * (lumpPct / 100);
 
-  let balance = pot - lumpTaken;
-  const years: DrawdownModel["years"] = [];
+  const years: DrawdownYear[] = [];
   let depletionAge: number | null = null;
-  for (let age = startAge; age <= 100; age++) {
-    const draw = Math.max(0, income - (age >= STATE_PENSION_AGE ? pension : 0));
+  let balance = pot - lumpTaken;
+
+  for (let age = startAge; age <= MAX_AGE; age++) {
+    const pensionThisYear = age >= STATE_PENSION_AGE ? pension : 0;
+    const draw = Math.max(0, income - pensionThisYear);
     const afterDraw = balance - draw;
+
     if (afterDraw <= 0) {
       years.push({ age, draw: balance, growth: 0, balance: 0 });
       depletionAge = age;
       break;
     }
-    const g = afterDraw * (growth / 100);
-    balance = afterDraw + g;
-    years.push({ age, draw, growth: g, balance });
+
+    const growthAmount = afterDraw * (growth / 100);
+    balance = afterDraw + growthAmount;
+    years.push({ age, draw, growth: growthAmount, balance });
   }
+
   return { startAge, pot, income, pension, growth, lumpPct, lumpTaken, years, depletionAge };
 }
 
-export async function run(
-  input: Record<string, string>,
-  _secrets: Record<string, string>,
-  _ctx: ToolCtx,
-): Promise<Result> {
-  const m = computeDrawdown(input);
-  const verdict =
-    m.depletionAge === null
-      ? "Lasts beyond age 100 on these assumptions"
-      : `Runs out at age ${m.depletionAge}`;
+// ---------------------------------------------------------------------------
+// Result
+// ---------------------------------------------------------------------------
 
-  const blocks: ResultBlock[] = [
+const describeVerdict = (m: DrawdownModel): string =>
+  m.depletionAge === null
+    ? `Lasts beyond age ${MAX_AGE} on these assumptions`
+    : `Runs out at age ${m.depletionAge}`;
+
+const describePotAfterLump = (m: DrawdownModel): string => {
+  const base = gbp(m.pot - m.lumpTaken);
+  return m.lumpPct ? `${base} (took ${gbp(m.lumpTaken)} tax-free)` : base;
+};
+
+const describeYearlyDraw = (m: DrawdownModel): string =>
+  `${gbp(Math.max(0, m.income - m.pension))} once the State Pension starts at ${STATE_PENSION_AGE} (${gbp(m.income)} before)`;
+
+function buildBlocks(m: DrawdownModel, verdict: string): ResultBlock[] {
+  return [
     {
       type: "keyvalues",
       items: [
         { label: "The verdict", value: verdict },
-        { label: "Pot after lump sum", value: `${gbp(m.pot - m.lumpTaken)}${m.lumpPct ? ` (took ${gbp(m.lumpTaken)} tax-free)` : ""}` },
-        {
-          label: "Yearly draw from the pot",
-          value: `${gbp(Math.max(0, m.income - m.pension))} once the State Pension starts at ${STATE_PENSION_AGE} (${gbp(m.income)} before)`,
-        },
+        { label: "Pot after lump sum", value: describePotAfterLump(m) },
+        { label: "Yearly draw from the pot", value: describeYearlyDraw(m) },
       ],
     },
     {
@@ -104,20 +147,21 @@ export async function run(
       header: ["Age", "Drawn from pot", "Growth", "Balance at year end"],
       rows: m.years.map((y) => [String(y.age), gbp(y.draw), gbp(y.growth), gbp(y.balance)]),
     },
-    {
-      type: "markdown",
-      content:
-        "_Income tax is ignored in this v1 model — the draw shown is gross. The Excel notes say the same._",
-    },
+    TAX_NOTE_BLOCK,
     DISCLAIMER_BLOCK,
   ];
+}
+
+export const run: RunFn = async (input) => {
+  const model = computeDrawdown(input);
+  const verdict = describeVerdict(model);
 
   return {
     title: "Your Pension Drawdown Projection",
     summary: verdict,
-    blocks,
+    blocks: buildBlocks(model, verdict),
     attachments: [
-      { filename: "drawdown-model.xlsx", mimeType: XLSX_MIME, data: buildDrawdownXlsx(m) },
+      { filename: "drawdown-model.xlsx", mimeType: XLSX_MIME, data: buildDrawdownXlsx(model) },
     ],
   };
-}
+};
